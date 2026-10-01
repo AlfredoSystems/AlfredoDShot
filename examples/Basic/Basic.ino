@@ -1,7 +1,7 @@
 /*
   Basic - bidirectional DShot on one pin, printing RPM.
 
-  Wiring: GPIO 8 -> [33 ohm] -> ESC signal, with a 1k pull-up to 3V3 on the ESC
+  Wiring: GPIO 8 -> [100 ohm] -> ESC signal, with a 1k pull-up to 3V3 on the ESC
   side of the series resistor. Share ground. See README.md for the diagram.
 */
 

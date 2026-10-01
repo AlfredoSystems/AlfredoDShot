@@ -118,6 +118,14 @@ class AlfredoDShot {
   void resetStats() { _stats = Stats{}; }
   float lossPercent() const;
 
+  // Drive our frames push-pull and release the line to open-drain as soon as
+  // each frame is out, the way flight controllers do. The pull-up then only
+  // has to hold the idle level, so it can be weak (10k or more), which lets an
+  // ESC with a series resistor on its signal pad pull the reply low enough.
+  // Off by default. Needs the ESC's reply to start after the TX-done interrupt
+  // has run; AM32 waits ~25 us, which leaves a wide margin.
+  void setPushPull(bool on) { _pushPull = on; }
+
   // Time the RMT RX waits for the line to go quiet before ending a capture.
   // Must sit above the ESC's ~30 us turnaround and below your frame interval.
   void setRxIdleTimeoutUs(uint16_t us) { _rxIdleNs = us * 1000u; }
@@ -134,8 +142,11 @@ class AlfredoDShot {
  private:
   static bool IRAM_ATTR onRxDone(rmt_channel_handle_t ch,
                                  const rmt_rx_done_event_data_t *ev, void *ctx);
+  static bool IRAM_ATTR onTxDone(rmt_channel_handle_t ch,
+                                 const rmt_tx_done_event_data_t *ev, void *ctx);
   void buildFrame(uint16_t value);
   DShotRxStatus decode(size_t nsym);
+  DShotRxStatus decodeReply(size_t p, size_t np, uint32_t telemQ8, uint16_t &d16);
   void apply(uint16_t data12);
   void armRx();
 
@@ -145,10 +156,12 @@ class AlfredoDShot {
 
   int _pin = -1;
   bool _bidir = true;
+  volatile bool _pushPull = false;
   uint8_t _poles = 14;
 
   uint16_t _tbit = 0, _t0h = 0, _t1h = 0;  // TX bit timings, RMT ticks
   uint32_t _telemQ8 = 0;                   // telemetry bit period, ticks << 8
+  uint32_t _telemNomQ8 = 0;                // what the spec says it should be
   uint16_t _gapMin = 0;                    // turnaround gap threshold, ticks
   uint32_t _rxIdleNs = 60000;
   uint32_t _rxWaitUs = 0;  // worst-case capture length

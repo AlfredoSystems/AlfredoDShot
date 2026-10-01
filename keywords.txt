@@ -39,6 +39,7 @@ resetStats	KEYWORD2
 lossPercent	KEYWORD2
 setRxIdleTimeoutUs	KEYWORD2
 lastFrame	KEYWORD2
+setPushPull	KEYWORD2
 
 #######################################
 # Constants (LITERAL1)

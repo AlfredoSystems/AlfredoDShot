@@ -12,4 +12,6 @@ jobs:
           # set "submit" here: rule LP017 fails a name that is already indexed,
           # which now includes this one.
           library-manager: update
-          compliance: strict
+          # Not "strict": its rule LP021 fails two-part versions like 1.1,
+          # which the Library Manager itself accepts.
+          compliance: specification

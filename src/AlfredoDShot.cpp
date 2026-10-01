@@ -2,6 +2,7 @@
 
 #include <driver/gpio.h>
 #include <esp_timer.h>
+#include <hal/gpio_ll.h>
 
 // 80 MHz = APB, divider 1. 12.5 ns ticks give ~106 ticks per telemetry bit at
 // DShot600, which is plenty to resolve 1/2/3-bit GCR run lengths.
@@ -56,6 +57,7 @@ bool AlfredoDShot::begin(int pin, DShotMode mode, bool bidirectional,
   // Telemetry runs at 5/4 of the DShot bitrate. Kept in 24.8 fixed point so
   // run-length rounding stays exact.
   _telemQ8 = (uint32_t)(((uint64_t)RMT_RES_HZ * 4 * 256) / (5ull * br));
+  _telemNomQ8 = _telemQ8;
   // The ESC waits ~30 us before answering; nothing in our own frame stays high
   // for longer than 5/8 of a bit, so 2.5 bits cleanly separates the two.
   _gapMin = (uint16_t)((uint32_t)_tbit * 5 / 2);
@@ -90,6 +92,15 @@ bool AlfredoDShot::begin(int pin, DShotMode mode, bool bidirectional,
   if (rmt_new_tx_channel(&txc, &_tx) != ESP_OK) {
     end();
     return false;
+  }
+
+  if (_bidir) {
+    rmt_tx_event_callbacks_t tcbs = {};
+    tcbs.on_trans_done = onTxDone;
+    if (rmt_tx_register_event_callbacks(_tx, &tcbs, this) != ESP_OK) {
+      end();
+      return false;
+    }
   }
 
   rmt_copy_encoder_config_t enc = {};
@@ -150,6 +161,16 @@ bool AlfredoDShot::onRxDone(rmt_channel_handle_t,
   AlfredoDShot *self = (AlfredoDShot *)ctx;
   self->_rxCount = ev->num_symbols;
   self->_rxDone = true;
+  return false;
+}
+
+// Push-pull mode: the frame is out, so hand the line back to the pull-up
+// before the ESC starts answering. Only the pad's open-drain bit changes; the
+// RMT signal routing stays put (see the gpio_set_direction() note in begin()).
+bool AlfredoDShot::onTxDone(rmt_channel_handle_t,
+                            const rmt_tx_done_event_data_t *, void *ctx) {
+  AlfredoDShot *self = (AlfredoDShot *)ctx;
+  if (self->_pushPull) gpio_ll_od_enable(&GPIO, self->_pin);
   return false;
 }
 
@@ -232,6 +253,9 @@ bool AlfredoDShot::send(uint16_t value) {
   if (_bidir) armRx();
 
   buildFrame(value);
+  // The RMT output idles high, so dropping open-drain here drives the line
+  // high until the frame's first bit - no glitch. onTxDone() restores it.
+  if (_bidir && _pushPull) gpio_ll_od_disable(&GPIO, _pin);
   rmt_transmit_config_t txc = {};
   txc.flags.eot_level = _bidir ? 1 : 0;
   rmt_transmit(_tx, _enc, _txSym, sizeof(_txSym), &txc);
@@ -251,12 +275,12 @@ void AlfredoDShot::command(uint16_t cmd, uint8_t repeat) {
   _cmdRepeat = repeat ? repeat : 1;
 }
 
+#define PULSE_LVL(i) ((i) & 1 ? _rxBuf[(i) >> 1].level1 : _rxBuf[(i) >> 1].level0)
+#define PULSE_DUR(i) ((i) & 1 ? _rxBuf[(i) >> 1].duration1 : _rxBuf[(i) >> 1].duration0)
+
 DShotRxStatus AlfredoDShot::decode(size_t nsym) {
   const size_t np = nsym * 2;
   if (np == 0) return DSHOT_RX_NO_REPLY;
-
-#define PULSE_LVL(i) ((i) & 1 ? _rxBuf[(i) >> 1].level1 : _rxBuf[(i) >> 1].level0)
-#define PULSE_DUR(i) ((i) & 1 ? _rxBuf[(i) >> 1].duration1 : _rxBuf[(i) >> 1].duration0)
 
   // Step past our own transmitted frame by finding the turnaround gap: the
   // first long high run. It swallows the tail of our last bit plus the ~30 us
@@ -277,6 +301,29 @@ DShotRxStatus AlfredoDShot::decode(size_t nsym) {
   _echoPulses = found ? (uint16_t)(p - 1) : (uint16_t)p;
   if (!found || p >= np) return DSHOT_RX_NO_REPLY;
 
+  // The spec puts the reply at 5/4 of our bitrate, but AM32 doesn't always
+  // follow it: at DShot300 it answers at the DShot600 telemetry rate. So when
+  // the expected bit time fails, try half and double, and keep whichever
+  // passes GCR and CRC. A wrong bit time passes both about 1 time in 256.
+  uint16_t d16;
+  DShotRxStatus st = decodeReply(p, np, _telemQ8, d16);
+  if (st == DSHOT_RX_FRAMING || st == DSHOT_RX_BAD_GCR || st == DSHOT_RX_BAD_CRC) {
+    const uint32_t alt[] = {_telemNomQ8, _telemNomQ8 / 2, _telemNomQ8 * 2};
+    for (uint32_t q : alt) {
+      if (q == _telemQ8) continue;
+      if (decodeReply(p, np, q, d16) == DSHOT_RX_OK) {
+        _telemQ8 = q;
+        st = DSHOT_RX_OK;
+        break;
+      }
+    }
+  }
+  if (st == DSHOT_RX_OK) apply(d16 >> 4);
+  return st;
+}
+
+DShotRxStatus AlfredoDShot::decodeReply(size_t p, size_t np, uint32_t telemQ8,
+                                        uint16_t &d16) {
   // Rebuild the 21 transmitted bits from run lengths. The line is inverted, so
   // a low run contributes 1s and a high run 0s.
   uint32_t v = 0;
@@ -286,7 +333,7 @@ DShotRxStatus AlfredoDShot::decode(size_t nsym) {
     if (d == 0) break;
     if (bits == 0 && PULSE_LVL(p)) return DSHOT_RX_FRAMING;  // must start low
 
-    uint32_t n = ((uint32_t)d * 256u + (_telemQ8 >> 1)) / _telemQ8;
+    uint32_t n = ((uint32_t)d * 256u + (telemQ8 >> 1)) / telemQ8;
     if (n == 0) n = 1;
     if (bits + (int)n > 21) n = 21 - bits;  // trailing idle run, clamp it
 
@@ -296,9 +343,6 @@ DShotRxStatus AlfredoDShot::decode(size_t nsym) {
   if (bits == 0) return DSHOT_RX_NO_REPLY;
   if (bits < 21) v <<= (21 - bits);  // line went idle early, pad with 0s
 
-#undef PULSE_LVL
-#undef PULSE_DUR
-
   // A 1 in the GCR stream means "the line toggled here".
   const uint32_t gcr = (v ^ (v >> 1)) & 0xFFFFFu;
   const uint8_t n3 = kGcrToNibble[(gcr >> 15) & 0x1F];
@@ -307,14 +351,15 @@ DShotRxStatus AlfredoDShot::decode(size_t nsym) {
   const uint8_t n0 = kGcrToNibble[gcr & 0x1F];
   if ((n3 | n2 | n1 | n0) & 0xF0) return DSHOT_RX_BAD_GCR;
 
-  const uint16_t d16 = (n3 << 12) | (n2 << 8) | (n1 << 4) | n0;
+  d16 = (n3 << 12) | (n2 << 8) | (n1 << 4) | n0;
   uint16_t csum = d16 ^ (d16 >> 8);
   csum ^= csum >> 4;
   if ((csum & 0x0F) != 0x0F) return DSHOT_RX_BAD_CRC;  // CRC is inverted
-
-  apply(d16 >> 4);
   return DSHOT_RX_OK;
 }
+
+#undef PULSE_LVL
+#undef PULSE_DUR
 
 void AlfredoDShot::apply(uint16_t data12) {
   // Extended telemetry reuses eRPM codings the ESC never emits: a zero mantissa

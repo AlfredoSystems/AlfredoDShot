@@ -33,10 +33,45 @@ holds the bus itself rather than just the ESP's pad.
 
 | | |
 |---|---|
-| **1 kΩ pull-up to 3V3** | **Required.** The ESP drives the line open-drain so the ESC can pull it low to answer. The pull-up provides the rising edge. 1 kΩ–2.2 kΩ is the useful range; the ESP's internal ~45 kΩ pull-up is *far* too slow (a DShot600 telemetry bit is only 1.33 µs) and telemetry will not decode without an external one. |
-| **33 Ω series resistor** | Damps ringing on the signal wire and limits current if both ends ever drive at once. Put it at the ESP end. 33–150 Ω all work; it costs nothing at these edge rates and it is cheap insurance on a robot. |
+| **1 kΩ pull-up to 3V3** | **Required.** The ESP drives the line open-drain so the ESC can pull it low to answer. The pull-up provides the rising edge. 1 kΩ–2.2 kΩ is the useful range; the ESP's internal ~45 kΩ pull-up is *far* too slow (a DShot600 telemetry bit is only 1.33 µs) and telemetry will not decode without an external one. If your ESC has a series resistor on its signal pad, see [ESCs with a series resistor](#escs-with-a-series-resistor) — it needs a *weaker* pull-up and `setPushPull(true)`. |
+| **100 Ω series resistor** | Damps ringing on the signal wire and limits current if both ends ever drive at once. Put it at the ESP end. It costs nothing at these edge rates and it is cheap insurance on a robot. |
 | **Shared ground** | Required, and it must be a real signal ground — run a dedicated ground wire from the ESC to the ESP, not through the motor power return. |
 | **Power** | Do not feed the ESC's BEC into the ESP's 3V3 rail unless you know it is 3.3 V. Most AM32 ESCs have no BEC at all. |
+
+### ESCs with a series resistor
+
+Many ESCs put a resistor, often ~470 Ω, between the signal pad and the MCU pin
+to protect it. That doesn't matter for throttle, since the ESC's input draws no
+current. It does matter for the reply: the ESC has to pull the line low
+*against your pull-up*, through that resistor, so the reply only gets as low as
+a voltage divider allows:
+
+```
+V_low ≈ 3.3 V × R_esc / (R_esc + R_pullup)
+```
+
+The ESP32-S3 only guarantees a low below 0.825 V. With a 470 Ω ESC resistor, a
+1 kΩ pull-up leaves the reply around 1.1 V and the ESP never sees it: throttle
+works, `echoPulses()` reads 31, and every frame is `NO-REPLY`. A scope shows
+the reply clearly, bottoming out above 1 V.
+
+A weaker pull-up lowers the reply, but with the default open-drain transmit it
+also slows the rising edges of your own frames. `setPushPull(true)` removes
+that trade-off: the ESP drives both edges of its frame and releases the line
+for the reply, so the pull-up only has to hold the idle level.
+
+| ESC series resistor | Pull-up | Transmit |
+|---|---|---|
+| none or ≤ 100 Ω | 1 kΩ | open-drain (default) |
+| ~470 Ω | 4.7–10 kΩ | `setPushPull(true)` |
+
+Measured on Rotini V4 (a BSS138 level shifter with a pull-up on each side, AM32
+ESCs with ~470 Ω): 1 kΩ + 1 kΩ gave a 1.75 V reply and no telemetry; 10 kΩ on
+the ESP side and 5.1 kΩ on the ESC side gave ~0.6 V, and with push-pull it runs
+DShot600 with no errors. See `examples/Rotini_V4_Telemetry`.
+
+To find the resistor, measure from the signal pad to the MCU pin with the ESC
+unpowered, or read the code on the resistor next to the pad (`471` = 470 Ω).
 
 The same circuit also carries the AM32 configurator — see
 `AM32_ConfiguratorLink` below. No adapter and no rewiring needed to change ESC
@@ -50,6 +85,15 @@ otherwise the ESP's push-pull driver fights the ESC. Once TX is open-drain, the
 second pin adds nothing but a wasted GPIO. Binding an RMT TX channel *and* an
 RMT RX channel to one pad (`io_loop_back` + `io_od_mode`) is exactly what
 ESP-IDF's own 1-Wire driver does, and it is the same problem.
+
+`setPushPull(true)` drives the frame push-pull and switches the pad back to
+open-drain from the RMT's transmit-done interrupt, ~25 µs before AM32 starts
+answering. Only the pad's open-drain bit changes, so the RMT stays connected.
+If that interrupt is ever delayed past the turnaround (flash writes stall it),
+that reply is lost, and for that moment both ends drive the line. Your series
+resistor plus the ESC's limits the current: ~6 mA with 100 Ω and a 470 Ω ESC,
+which is harmless. That is also why push-pull is meant for ESCs with a series
+resistor, not ones that drive the pad directly.
 
 The ESP32-S3 has 4 TX-capable and 4 RX-capable RMT channels, so this scheme
 supports 4 bidirectional ESCs — the whole GPIO 4–7 block.
@@ -101,6 +145,7 @@ through after that. It does not block, so several ESCs arm in parallel. Check
 | `status()` | `DSHOT_RX_OK`, `NO_REPLY`, `FRAMING`, `BAD_GCR`, `BAD_CRC`, `IDLE`. |
 | `stats()` / `lossPercent()` / `resetStats()` | Link health counters. |
 | `temperatureC()` / `voltage()` / `current()` / `stress()` / `escStatus()` | EDT values. Send `DSHOT_CMD_EDT_ENABLE` first; AM32 then interleaves them with eRPM frames at a few Hz. |
+| `setPushPull(on)` | Drive frames push-pull and release the line for the reply. Off by default. For weak pull-ups and ESCs with a series resistor — see [ESCs with a series resistor](#escs-with-a-series-resistor). |
 | `setRxIdleTimeoutUs(us)` | How long the receiver waits for the line to go quiet, default 60 µs. |
 | `echoPulses()` | Wiring check — see below. |
 
@@ -116,6 +161,10 @@ faults:
 | **31** | The pin is driven and released cleanly. Wiring is good; any remaining problem is on the ESC side. |
 | **0** | Nothing on the wire at all. The RMT output is not reaching the pad, or the line is shorted. |
 | **1–30** | Edges are being lost. Almost always a missing or too-weak pull-up: the line can be pulled low but cannot rise fast enough. |
+
+With `setPushPull(true)` the ESP drives both edges itself, so `echoPulses()`
+reads 31 even with no pull-up fitted. It still proves the pin works, but no
+longer checks the pull-up.
 
 ### Dead after an ESP reset (NO-REPLY, throttle ignored)
 
@@ -138,6 +187,9 @@ If `echoPulses()` is 31 but every frame is `NO-REPLY`:
   detect what the wiring does not present.
 - **Check the ground.** A missing signal ground is the other way to get a line
   the ESC cannot read.
+- **Check for a series resistor in the ESC.** If the throttle works but nothing
+  ever comes back, the ESC may be answering too weakly to pull your pull-up
+  low. See [ESCs with a series resistor](#escs-with-a-series-resistor).
 - Three rising beeps and nothing else is AM32's power-on chime. It means the
   ESC powered up but never saw a valid frame, so it never armed.
 
@@ -148,6 +200,10 @@ If `echoPulses()` is 31 but every frame is `NO-REPLY`:
   the error between the two RPM figures, the implied pole count, and a
   breakdown of exactly how frames are being lost.
 - **`Basic`** — twenty lines, prints RPM.
+- **`Rotini_V4_Telemetry`** — drives Rotini V4's FOO and BAR ESCs from the
+  [AlfredoTelemetry](https://github.com/AlfredoSystems/AlfredoTelemetry) web
+  page and plots their RPM, link loss and EDT values live. Needs the
+  AlfredoTelemetry library and its Dongle.
 - **`AM32_ConfiguratorLink`** — read and write ESC settings over the *same
   wire*, no adapter. Flash it and the ESP32-S3 appears to the
   [am32.ca](https://am32.ca) web configurator as a Direct Connect linker; flash
@@ -178,6 +234,13 @@ discarded rather than reported.
 
 The decoder was verified against a synthetic ESC encoder over all 2048
 representable eRPM values at ±12 % timing jitter, at all four DShot rates.
+
+The spec puts the reply at 5/4 of the DShot bitrate, but AM32 doesn't always
+follow it: at DShot300 it replies at the DShot600 rate (1.33 µs bits). When a
+reply fails at the expected bit time, the decoder tries half and double, and
+keeps whichever one passes both the GCR and CRC checks — a wrong bit time
+passes both about 1 time in 256. At DShot600 AM32 matches the spec and this
+never runs. DShot150 is untested: AM32 appeared to reply at ~2.5 µs bits there.
 
 ## Notes and limits
 
