@@ -100,6 +100,7 @@ class AlfredoDShot {
   bool edtSeen() const { return _edtSeen; }
   float temperatureC() const { return _edtTemp; }  // NAN until received, ~5 Hz
   float voltage() const { return _edtVolts; }      // NAN until received, ~5 Hz
+  // 1 A steps. Needs AM32 2.21 or newer; older AM32 reads double.
   float current() const { return _edtAmps; }       // NAN until received, ~25 Hz
   // AM32 never emits these two, so they stay 0. Kept for other EDT firmware.
   uint8_t stress() const { return _edtStress; }

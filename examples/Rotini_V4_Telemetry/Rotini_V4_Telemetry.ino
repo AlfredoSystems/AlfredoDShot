@@ -11,8 +11,8 @@
     enable        motors only spin while this is checked. It clears itself
                   when the page disconnects, and the throttles are held at 0
                   while it is off, so re-enabling never jumps to an old value.
-    foo_throttle  0-100 %
-    bar_throttle  0-100 %
+    foo_throttle  -100 to 100 %. Positive is forward, negative is reverse.
+    bar_throttle  -100 to 100 %
     edt           Extended DShot Telemetry (temperature, voltage, current).
                   Sent to each ESC once it is answering and its throttle
                   is 0, and re-sent until the data arrives.
@@ -22,9 +22,18 @@
   rpm and the EDT values show as gaps while the ESC isn't replying; status
   and echo (see reportMotor) say why.
 
-  Wiring: each ESC signal needs a 1k pull-up to 3V3 on the ESC side of a
-  series resistor, see README.md. Motor direction is set in the AM32
-  configurator (AM32_ConfiguratorLink example), not here.
+  ESC setup (AM32 configurator, see the AM32_ConfiguratorLink example):
+  "3D mode" must be ON. This sketch sends 3D-mode throttle, where the DShot
+  range is split in two halves, one per direction. With 3D mode off, the same
+  values would run the motor one way only, at the wrong speeds. Which way is
+  "forward" is the configurator's "Reversed" setting.
+
+  rpm is always positive: DShot telemetry carries speed, not direction. When
+  the throttle changes sign at speed, AM32 lets the motor slow down first and
+  then reverses it.
+
+  Wiring: Rotini V4's signal circuit, with the pull-up values listed in the
+  configuration section below.
 */
 
 #include <AlfredoDShot.h>
@@ -48,7 +57,7 @@ const uint8_t MOTOR_POLES = 14;      // 12N14P outrunner. Change to match yours.
 // use DSHOT300. Avoid DSHOT150: AM32 replies at the wrong speed for it.
 const DShotMode DSHOT_RATE = DSHOT600;
 const bool PUSH_PULL = true;
-const float MAX_THROTTLE_PCT = 100;  // lower this for bench testing
+const float MAX_THROTTLE_PCT = 100;  // limit in each direction; lower for bench testing
 
 const uint32_t LOOP_US = 1000;       // 1 kHz control loop
 const uint32_t SLOW_MS = 50;         // loss, EDT and vin, 20 times a second
@@ -56,7 +65,7 @@ const uint32_t SLOW_MS = 50;         // loss, EDT and vin, 20 times a second
 
 // Tunables, changed from the page
 bool enable = false;
-float fooThrottle = 0;  // percent
+float fooThrottle = 0;  // percent, negative is reverse
 float barThrottle = 0;
 bool edt = true;
 
@@ -74,11 +83,21 @@ Motor foo{{}, "foo_rpm", "foo_throttle", "foo_loss_pct", "foo_status", "foo_echo
 Motor bar{{}, "bar_rpm", "bar_throttle", "bar_loss_pct", "bar_status", "bar_echo",
           "bar_temp_c", "bar_volts", "bar_amps"};
 
+// Signed throttle percent to a DShot value for an ESC in 3D mode:
+//   0            stop
+//   48..1047     reverse, slowest to fastest
+//   1048..2047   forward, slowest to fastest
+uint16_t throttle3D(float pct) {
+  if (!(fabsf(pct) > 0)) return 0;  // also catches NaN
+  uint16_t steps = (uint16_t)(min(fabsf(pct), 100.0f) * 9.99f + 0.5f);  // 0..999
+  return (pct > 0 ? 1048 : 48) + steps;
+}
+
 // Sends one frame to the ESC and logs the RPM from the reply to the last one.
 // Every channel is added from the start, as NaN (a gap in the plot) while
 // there is no reading, so a dead link shows up instead of a missing channel.
 void runMotor(Motor &m, float throttlePct) {
-  m.esc.sendThrottle(throttlePct / 100.0f);
+  m.esc.send(throttle3D(throttlePct));
   Telemetry.add(m.throttle, throttlePct);
   Telemetry.add(m.rpm, m.esc.telemetryValid() ? m.esc.rpm() : NAN);
 }
@@ -169,8 +188,8 @@ void loop() {
     fooThrottle = 0;
     barThrottle = 0;
   }
-  fooThrottle = constrain(fooThrottle, 0.0f, MAX_THROTTLE_PCT);
-  barThrottle = constrain(barThrottle, 0.0f, MAX_THROTTLE_PCT);
+  fooThrottle = constrain(fooThrottle, -MAX_THROTTLE_PCT, MAX_THROTTLE_PCT);
+  barThrottle = constrain(barThrottle, -MAX_THROTTLE_PCT, MAX_THROTTLE_PCT);
 
   updateEdt(foo, fooThrottle, "foo");
   updateEdt(bar, barThrottle, "bar");

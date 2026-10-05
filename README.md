@@ -144,7 +144,7 @@ through after that. It does not block, so several ESCs arm in parallel. Check
 | `rpm()` / `erpm()` / `periodUs()` | Shaft RPM, electrical RPM, raw commutation period. |
 | `status()` | `DSHOT_RX_OK`, `NO_REPLY`, `FRAMING`, `BAD_GCR`, `BAD_CRC`, `IDLE`. |
 | `stats()` / `lossPercent()` / `resetStats()` | Link health counters. |
-| `temperatureC()` / `voltage()` / `current()` / `stress()` / `escStatus()` | EDT values. Send `DSHOT_CMD_EDT_ENABLE` first; AM32 then interleaves them with eRPM frames at a few Hz. |
+| `temperatureC()` / `voltage()` / `current()` / `stress()` / `escStatus()` | EDT values. Send `DSHOT_CMD_EDT_ENABLE` first; AM32 then interleaves them with eRPM frames at a few Hz. `current()` is in 1 A steps and assumes AM32 2.21 or newer; AM32 2.20 and older sent 0.5 A steps, so it reads double there. |
 | `setPushPull(on)` | Drive frames push-pull and release the line for the reply. Off by default. For weak pull-ups and ESCs with a series resistor — see [ESCs with a series resistor](#escs-with-a-series-resistor). |
 | `setRxIdleTimeoutUs(us)` | How long the receiver waits for the line to go quiet, default 60 µs. |
 | `echoPulses()` | Wiring check — see below. |

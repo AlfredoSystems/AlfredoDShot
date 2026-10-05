@@ -371,12 +371,10 @@ void AlfredoDShot::apply(uint16_t data12) {
     switch (type) {
       case 0x02: _edtTemp = val; break;           // deg C
       case 0x04: _edtVolts = val * 0.25f; break;  // 0.25 V steps, per spec
-      // 0.5 A steps, not the 1 A the EDT spec calls for: AM32 sends
-      // `actual_current / 50` and actual_current is in centiamps. Its own KISS
-      // path sends that same variable as centiamps, so AM32's two telemetry
-      // outputs disagree by 2x. Reported upstream as AM32 issue #408 - if that
-      // lands, delete the 0.5 here and go back to the spec.
-      case 0x06: _edtAmps = val * 0.5f; break;
+      // 1 A steps, per spec. AM32 before 2.21 sent 0.5 A steps here
+      // (`actual_current / 50`, fixed in AM32 PR #403), so on 2.20 and older
+      // this reads double the real current.
+      case 0x06: _edtAmps = val; break;
       case 0x0C: _edtStress = val; break;
       case 0x0E: _edtStatus = val; break;
       default: break;  // 0x08 / 0x0A are firmware debug channels

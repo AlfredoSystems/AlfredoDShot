@@ -44,8 +44,18 @@
   those 45 ms and the ESC jumped to the motor firmware; drop the battery and
   retry. An ESC already stuck in its bootloader (what happens if you reset the
   ESP while a DShot sketch runs) can be connected to with no power cycle.
+  ---------------------------------------------------------------------------
+  BOARDS THAT POWER THE ESP AND THE ESC TOGETHER (Rotini V4):
+    You can't apply the ESC's battery after clicking Connect, so set
+    ENTER_BOOTLOADER below. On every boot the sketch then sends 4 s of
+    zero-throttle DShot and stops. AM32 arms on the frames, reboots ~0.5 s after
+    they stop, finds the line held HIGH and waits in its bootloader.
+      1. Battery in, flash or reset this sketch, wait ~7 s.
+      2. Click Connect in am32.ca and pick this port.
+    To reconnect after the configurator has restarted the ESC, press RESET.
 */
 
+#include <AlfredoDShot.h>
 #include <HardwareSerial.h>
 
 #include "USB.h"
@@ -61,8 +71,11 @@
 #error "Set Tools > USB CDC On Boot to 'Disabled' for this VID/PID-spoofing build."
 #endif
 
-const int PIN_ESC = 8;          // same pin your DShot sketch uses
+const int PIN_ESC = 40;          // same pin your DShot sketch uses
 const long ESC_BAUD = 19200;    // AM32 / BLHeli one-wire rate, 8N1
+
+// Put an already-powered ESC into its bootloader at startup. See the header.
+const bool ENTER_BOOTLOADER = true;
 
 const uint16_t SPOOF_VID = 0x26BA;  // on am32.ca's direct-connect VID list
 const uint16_t SPOOF_PID = 0x0001;  // any value except 0xE204
@@ -90,7 +103,30 @@ static void configureOneWire() {
   esp_rom_gpio_connect_in_signal((gpio_num_t)PIN_ESC, U1RXD_IN_IDX, false);
 }
 
+// Sends zero-throttle DShot long enough for AM32 to arm, then goes quiet with
+// the line released. AM32 reboots when the signal stops (0.5 s armed, 2 s
+// unarmed), and its bootloader stays put while the pull-up holds the line
+// HIGH. An ESC that was already in its bootloader just stays there.
+static void enterBootloader() {
+  AlfredoDShot esc;
+  if (!esc.begin(PIN_ESC, DSHOT300, true)) return;
+
+  uint32_t start = millis();
+  uint32_t next = micros();
+  while (millis() - start < 4000) {
+    if ((int32_t)(micros() - next) < 0) continue;
+    next += 1000;
+    esc.send(0);
+  }
+  esc.end();
+
+  // Float the pad so nothing can hold the line low while the ESC reboots.
+  gpio_set_direction((gpio_num_t)PIN_ESC, GPIO_MODE_INPUT);
+  delay(2500);
+}
+
 void setup() {
+  if (ENTER_BOOTLOADER) enterBootloader();
   configureOneWire();
 
   // Present the spoofed identity before starting USB - VID/PID must be set
