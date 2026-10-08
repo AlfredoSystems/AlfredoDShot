@@ -200,6 +200,11 @@ If `echoPulses()` is 31 but every frame is `NO-REPLY`:
   the error between the two RPM figures, the implied pole count, and a
   breakdown of exactly how frames are being lost.
 - **`Basic`** — twenty lines, prints RPM.
+- **`PestoLink_OneMotor`** — one gamepad axis drives one ESC over Bluetooth,
+  with the ESC's telemetry in PestoLink's terminal. Needs the
+  [PestoLink-Receive](https://github.com/AlfredoSystems/PestoLink-Receive)
+  library. Expects the ESC in 3D mode (stick back reverses); a constant
+  switches it to one direction.
 - **`Rotini_V4_Telemetry`** — drives Rotini V4's FOO and BAR ESCs from the
   [AlfredoTelemetry](https://github.com/AlfredoSystems/AlfredoTelemetry) web
   page and plots their RPM, link loss and EDT values live. Needs the

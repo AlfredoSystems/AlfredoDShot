@@ -7,7 +7,7 @@
 
 #include <AlfredoDShot.h>
 
-const int PIN_ESC = 8;
+const int PIN_ESC = 4;
 const uint8_t MOTOR_POLES = 14;
 
 AlfredoDShot esc;

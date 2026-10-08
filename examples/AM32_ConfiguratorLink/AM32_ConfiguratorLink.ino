@@ -71,7 +71,7 @@
 #error "Set Tools > USB CDC On Boot to 'Disabled' for this VID/PID-spoofing build."
 #endif
 
-const int PIN_ESC = 8;          // same pin your DShot sketch uses
+const int PIN_ESC = 4;          // same pin your DShot sketch uses
 const long ESC_BAUD = 19200;    // AM32 / BLHeli one-wire rate, 8N1
 
 // Put an already-powered ESC into its bootloader at startup. See the header.

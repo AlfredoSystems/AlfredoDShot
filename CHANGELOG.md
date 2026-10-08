@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `PestoLink_OneMotor` example: one gamepad axis drives one ESC over
+  Bluetooth, with the ESC's telemetry in PestoLink's terminal.
+
 ## 1.1 - 2026-10-05
 
 ### Added
