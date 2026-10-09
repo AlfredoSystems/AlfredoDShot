@@ -12,6 +12,8 @@
   configurator lists the port. The receiver hearing its own transmission gives
   the one-wire echo the configurator expects from a real Direct Connect adapter.
 
+  One ESC per flash. For several ESCs at once, see AM32_FourWayLink.
+
   ---------------------------------------------------------------------------
   REQUIRED BOARD SETTINGS (both, or it will not build):
     Tools > USB Mode         : "USB-OTG (TinyUSB)"

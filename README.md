@@ -218,6 +218,12 @@ If `echoPulses()` is 31 but every frame is `NO-REPLY`:
   To connect: leave the ESC **unpowered**, hit Connect in the configurator,
   *then* apply the battery. AM32's bootloader only listens briefly at power-up,
   so it has to come up after the configurator is already listening.
+- **`AM32_FourWayLink`** — the same idea for **several ESCs**. The ESP32-S3
+  presents itself to am32.ca as a flight controller: it answers the MSP
+  handshake, then serves the configurator's 4-way interface, speaking the
+  AM32 bootloader protocol on whichever ESC pin the configurator names. Every
+  pin in `ESC_PINS` shows up as its own ESC, and each can be read, configured
+  and flashed in turn. Same board settings as `AM32_ConfiguratorLink`.
 
 If `poles?` in the AS5600 example settles on a clean even number that is not
 what you passed to `begin()`, that is your motor's real pole count.

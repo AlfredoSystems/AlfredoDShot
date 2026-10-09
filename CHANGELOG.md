@@ -6,6 +6,10 @@
 
 - `PestoLink_OneMotor` example: one gamepad axis drives one ESC over
   Bluetooth, with the ESC's telemetry in PestoLink's terminal.
+- `AM32_FourWayLink` example: configure and flash several ESCs from am32.ca
+  at once. The ESP32-S3 acts as a flight controller, answering the MSP
+  handshake and the 4-way interface, and talks to each ESC's bootloader over
+  its own DShot wire.
 
 ## 1.1 - 2026-10-05
 
